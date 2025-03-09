@@ -31,6 +31,7 @@ class KnowledgeState(BaseModel):
 
 class ObjectiveState(BaseModel):
     answer: str | None = None
+    completion_criteria: str
     description: str
     knowledges: list[KnowledgeState] = []
     short_name: str

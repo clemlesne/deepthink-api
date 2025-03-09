@@ -36,7 +36,8 @@ async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
     # Add first objective
     state.objectives.append(
         ObjectiveState(
-            description="Identify the ins and outs of the question. What? Why? How? When? Where? Who?",
+            completion_criteria="User meaning is understood and research objectives are identified.",
+            description="Ideas: what? why? how? when? where? who?",
             knowledges=[
                 KnowledgeState(
                     description=state.user_question,
@@ -199,8 +200,15 @@ async def _detect_new_objectives(
     """
 
     class _Objective(BaseModel):
-        description: str
-        short_name: str
+        completion_criteria: str = Field(
+            description="How can we measure the completion of this research?",
+        )
+        description: str = Field(
+            description="What is the objective of this research?",
+        )
+        short_name: str = Field(
+            description="A short sentence to identify easily the objective.",
+        )
 
     class _Res(BaseModel):
         tasks: list[_Objective] = Field(
@@ -246,6 +254,7 @@ async def _detect_new_objectives(
 
     return [
         ObjectiveState(
+            completion_criteria=task.completion_criteria,
             description=task.description,
             short_name=task.short_name,
         )
@@ -338,6 +347,9 @@ async def _should_stop_objective(
 
             # Question
             {objective.description}
+
+            # Completion criteria
+            {objective.completion_criteria}
 
             # Response options
             - "Can't answer", if you can't answer the question
