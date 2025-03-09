@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from json import JSONDecodeError, loads
+from textwrap import dedent
 from typing import TypeVar
 
 import litellm
@@ -81,7 +82,7 @@ async def non_empty_completion(  # noqa: PLR0913
     """
     # Explicit the response type in the system message
     system = f"""
-        {system}
+        {dedent(system)}
 
         # Response format
         string
@@ -219,7 +220,7 @@ async def _raw_completion(  # noqa: PLR0913
     """
     local_history = existing_history.copy()
     system_message = ChatCompletionSystemMessageParam(
-        content=system,
+        content=dedent(system),
         role="system",
     )
 
