@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from functools import wraps
 from json import JSONDecodeError, loads
 from typing import TypeVar
 
@@ -61,48 +62,6 @@ class CompletionException(Exception):
 
 class ValidationException(Exception):
     pass
-
-
-async def read_url_tool(
-    url: str,
-) -> str:
-    """
-    Read a URL and return the content.
-    """
-
-    async def _exec() -> str | None:
-        # Try cache
-        cache_key = url
-        cache = CRAWL_CACHE.get(cache_key)
-        if cache:
-            return cache  # pyright: ignore[reportReturnType]
-
-        # Scrape
-        async with AsyncWebCrawler() as crawler:
-            result: CrawlResult = await crawler.arun(
-                config=CRAWL_CONFIG,
-                url=url,
-            )  # pyright: ignore[reportAssignmentType]
-        res = str(result.markdown)
-
-        # Update cache
-        CRAWL_CACHE.set(
-            expire=60 * 60 * 24 * 7,  # 7 days
-            key=cache_key,
-            value=res,
-        )
-
-        return res
-
-    # Execute
-    markdown = await _exec()
-
-    # Inform LLM if no content
-    if not markdown:
-        return "Could not read URL."
-
-    # Return page content
-    return markdown
 
 
 async def non_empty_completion(  # noqa: PLR0913
@@ -450,6 +409,7 @@ async def _execute_tool(
             **loads(tool_call.function.arguments)
         )
     except TypeError as e:
+        logger.debug("Tool execution failed: %s", e)
         return ChatCompletionToolMessageParam(
             content=f"Bad arguments: {e}",
             role="tool",
@@ -461,3 +421,67 @@ async def _execute_tool(
         role="tool",
         tool_call_id=tool_call.id,
     )
+
+
+def read_url_tool(
+    model: str,
+    temperature: float,
+    top_p: float,
+    usage: Usage,
+) -> Callable[..., Awaitable[str]]:
+    async def _wrapper(
+        url: str,
+    ) -> str:
+        """
+        Read a URL and return the content.
+
+        Content is cached for 7 days and is an analysis of the raw web page.
+        """
+        # Try cache
+        cache_key = url
+        cache = CRAWL_CACHE.get(cache_key)
+        if cache:
+            return cache  # pyright: ignore[reportReturnType]
+
+        # Scrape
+        async with AsyncWebCrawler() as crawler:
+            result: CrawlResult = await crawler.arun(
+                config=CRAWL_CONFIG,
+                url=url,
+            )  # pyright: ignore[reportAssignmentType]
+        content = str(result.markdown)
+
+        synthesis = await non_empty_completion(
+            model=model,
+            temperature=temperature,
+            top_p=top_p,
+            usage=usage,
+            existing_history=[
+                ChatCompletionUserMessageParam(
+                    content=content,
+                    role="user",
+                ),
+            ],
+            system=f"""
+                Assistant is an archivist with 20 years of experience.
+
+                # Objective
+                Extract the meaning of the web page. It is not a summary, but a detailed analysis of the content, with persons, facts, sources and dates.
+
+                # Rules
+                - Be concise and precise
+                - Don't make assumptions
+            """,
+        )
+
+        # Update cache
+        CRAWL_CACHE.set(
+            expire=60 * 60 * 24 * 7,  # 7 days
+            key=cache_key,
+            value=synthesis,
+        )
+
+        # logger.debug("Parsed URL %s: %s", url, synthesis)
+        return synthesis
+
+    return _wrapper

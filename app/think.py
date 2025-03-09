@@ -342,7 +342,7 @@ async def _new_step(
     Step is a question that will be asked to the assistant.
     """
 
-    async def _persist_knowledge(
+    async def _knowledge_tool(
         knowledge: str,
     ) -> str:
         """
@@ -359,8 +359,13 @@ async def _new_step(
         res_type=StepState,
         temperature=think.req.temperature,
         tools=[
-            _persist_knowledge,
-            read_url_tool,
+            _knowledge_tool,
+            read_url_tool(
+                model=think.req.model,
+                temperature=think.req.temperature,
+                top_p=think.req.top_p,
+                usage=think.usage,
+            ),
         ],
         top_p=think.req.top_p,
         usage=think.usage,
