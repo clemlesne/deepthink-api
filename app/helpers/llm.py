@@ -51,6 +51,9 @@ CRAWL_CACHE = DiskCache(".crawl4ai_cache")
 P = TypeVar("P", bound=bool | float | int | str | BaseModel)
 T = TypeVar("T")
 
+# LLM
+MAX_SIMULTANEOUS_TOOLS = 5
+
 
 class CompletionException(Exception):
     pass
@@ -337,9 +340,10 @@ async def _raw_completion(  # noqa: PLR0913
                 *[
                     _execute_tool(
                         available_functions=available_functions,
+                        position=i,
                         tool_call=tool_call,
                     )
-                    for tool_call in tool_calls
+                    for i, tool_call in enumerate(tool_calls)
                 ]
             )
         )
@@ -407,8 +411,9 @@ async def _raw_completion(  # noqa: PLR0913
 
 
 async def _execute_tool(
-    tool_call: ChatCompletionMessageToolCall,
     available_functions: dict[str, Callable[..., Awaitable[str]]],
+    position: int,
+    tool_call: ChatCompletionMessageToolCall,
 ) -> ChatCompletionToolMessageParam:
     # Skip if no function name
     function_name = tool_call.function.name
@@ -423,6 +428,14 @@ async def _execute_tool(
     if function_name not in available_functions:
         return ChatCompletionToolMessageParam(
             content=f"Function '{function_name}' not available.",
+            role="tool",
+            tool_call_id=tool_call.id,
+        )
+
+    # Skip if too many tools
+    if position >= MAX_SIMULTANEOUS_TOOLS:
+        return ChatCompletionToolMessageParam(
+            content=f"Too many tools called at once (limit is {MAX_SIMULTANEOUS_TOOLS}).",
             role="tool",
             tool_call_id=tool_call.id,
         )
