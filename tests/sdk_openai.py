@@ -11,7 +11,7 @@ MESSAGES = [
     ChatCompletionUserMessageParam(
         content="What is the status of the world?",
         role="user",
-    )
+    ),
 ]
 
 

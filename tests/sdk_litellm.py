@@ -7,7 +7,7 @@ MESSAGES = [
     {
         "content": "What is the status of the world?",
         "role": "user",
-    }
+    },
 ]
 
 
