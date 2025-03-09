@@ -255,7 +255,7 @@ async def _raw_completion(  # noqa: PLR0913
         )
 
     # Build history for the request
-    sent_history = [
+    sent_history: MessagesList = [
         system_message,
         *local_history,
     ]  # History + system message
@@ -275,11 +275,14 @@ async def _raw_completion(  # noqa: PLR0913
     # Update usage
     # TODO: Consumption is not accurate at all with that method, use data from the response
     usage.completion_tokens += token_counter(
-        text=str(choice.message),
+        messages=[choice.message.model_dump()],
         model=model,
     )  # Increment completion from the response string
     usage.prompt_tokens += token_counter(
-        text="\n".join([str(message) for message in sent_history]),
+        messages=[
+            message.model_dump() if isinstance(message, BaseModel) else message
+            for message in sent_history
+        ],
         model=model,
     )  # Increment prompt from the request objects
 
