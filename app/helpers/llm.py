@@ -429,7 +429,7 @@ def read_url_tool(
     top_p: float,
     usage: Usage,
 ) -> Callable[..., Awaitable[str]]:
-    async def _wrapper(
+    async def _read_url(
         url: str,
     ) -> str:
         """
@@ -484,4 +484,4 @@ def read_url_tool(
         # logger.debug("Parsed URL %s: %s", url, synthesis)
         return synthesis
 
-    return _wrapper
+    return _read_url
