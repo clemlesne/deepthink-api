@@ -17,7 +17,7 @@ from app.models.state import ObjectiveState, ObjectiveStatus, StepState, ThinkSt
 
 MAX_OBJECTIVES = 5
 MIN_STEPS = 3
-MAX_STEPS = 5
+MAX_STEPS = 10
 
 
 async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
