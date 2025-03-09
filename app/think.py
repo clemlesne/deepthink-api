@@ -1,6 +1,7 @@
 import asyncio
 
 from aiojobs import Scheduler
+from litellm.types.completion import ChatCompletionUserMessageParam
 from pydantic import BaseModel, Field
 from structlog.contextvars import bound_contextvars
 
@@ -13,7 +14,13 @@ from app.models.chat_completion import (
     ChatMessage,
     Usage,
 )
-from app.models.state import ObjectiveState, ObjectiveStatus, StepState, ThinkState
+from app.models.state import (
+    KnowledgeState,
+    ObjectiveState,
+    ObjectiveStatus,
+    StepState,
+    ThinkState,
+)
 
 MAX_OBJECTIVES = 5
 MIN_STEPS = 3
@@ -30,7 +37,13 @@ async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
     state.objectives.append(
         ObjectiveState(
             description="Identify the ins and outs of the question. What? Why? How? When? Where? Who?",
-            knowledge=f"User question is: {state.user_question}",
+            knowledges=[
+                KnowledgeState(
+                    description=state.user_question,
+                    short_name="User question",
+                    source="User message",
+                ),
+            ],
             short_name="Identify question",
         )
     )
@@ -167,7 +180,7 @@ async def _answer_user(
             {think.user_question}
 
             # Knowledge
-            {"\n".join([f"{objective.description}: {objective.knowledge}" for objective in think.objectives if objective.status == ObjectiveStatus.COMPLETED])}
+            {"\n".join([f"## {objective.short_name}\n{objective.description}\n{objective.knowledge}" for objective in think.objectives if objective.status == ObjectiveStatus.COMPLETED])}
         """,
     )
 
@@ -200,6 +213,15 @@ async def _detect_new_objectives(
         temperature=think.req.temperature,
         top_p=think.req.top_p,
         usage=think.usage,
+        existing_history=[
+            ChatCompletionUserMessageParam(
+                content=f"""
+                    {"\n".join([f"{objective.description}: {objective.answer}" for objective in think.objectives if objective.answer])}
+                    {"\n".join([f"{objective.description}: {objective.status}" for objective in think.objectives if not objective.answer])}
+                """,
+                role="user",
+            ),
+        ],
         system=f"""
             Assistant is a business analyst with 20 years of experience.
 
@@ -215,10 +237,6 @@ async def _detect_new_objectives(
 
             # Question
             {think.user_question}
-
-            # Ideas you worked on
-            {"\n".join([f"{objective.description}: {objective.answer}" for objective in think.objectives if objective.answer])}
-            {"\n".join([f"{objective.description}: {objective.status}" for objective in think.objectives if not objective.answer])}
 
             # Response options
             - A list of tasks, to help you answer the question
@@ -299,6 +317,12 @@ async def _should_stop_objective(
         temperature=think.req.temperature,
         top_p=think.req.top_p,
         usage=think.usage,
+        existing_history=[
+            ChatCompletionUserMessageParam(
+                content=objective.knowledge,
+                role="user",
+            ),
+        ],
         system=f"""
             Assistant is a business analyst with 20 years of experience.
 
@@ -314,9 +338,6 @@ async def _should_stop_objective(
 
             # Question
             {objective.description}
-
-            # Knowledge
-            {objective.knowledge}
 
             # Response options
             - "Can't answer", if you can't answer the question
@@ -344,13 +365,21 @@ async def _new_step(
 
     async def _knowledge_tool(
         knowledge: str,
+        short_name: str,
+        source: str,
     ) -> str:
         """
         Persist knowledge into the documentation.
 
         A knowledge is a sourced informmation that will be used to answer the question. Like a research, a data, or a fact.
         """
-        objective.knowledge += f"\n{knowledge}"
+        objective.knowledges.append(
+            KnowledgeState(
+                description=knowledge,
+                short_name=short_name,
+                source=source,
+            )
+        )
         return "Knowledge persisted."
 
     return await validated_completion(

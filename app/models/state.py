@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 from litellm.types.completion import ChatCompletionAssistantMessageParam
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 from app.helpers.llm import MessagesList
 from app.models.chat_completion import ChatCompletionRequest, Usage
@@ -23,13 +23,46 @@ class StepState(BaseModel):
     )
 
 
+class KnowledgeState(BaseModel):
+    description: str
+    short_name: str
+    source: str
+
+
 class ObjectiveState(BaseModel):
     answer: str | None = None
     description: str
-    knowledge: str = ""
+    knowledges: list[KnowledgeState] = []
     short_name: str
     status: ObjectiveStatus = ObjectiveStatus.PENDING
     steps: list[StepState] = []
+
+    @property
+    def summary(self) -> str:
+        """
+        Extract the summary from the objective.
+        """
+        return f"""
+        ## {self.short_name}
+
+        ### Description
+        {self.description}
+
+        ### Answer
+        {self.answer}
+        """
+
+    @property
+    def knowledge(self) -> str:
+        """
+        Extract the knowledge from the objective.
+        """
+        return "\n".join(
+            [
+                f"### {knowledge.short_name}\n{knowledge.description}\nSource: {knowledge.source}"
+                for knowledge in self.knowledges
+            ]
+        )
 
     @property
     def history(self) -> MessagesList:
