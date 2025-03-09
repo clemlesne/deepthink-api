@@ -22,7 +22,7 @@ from app.models.state import (
     ThinkState,
 )
 
-MAX_OBJECTIVES = 5
+MAX_OBJECTIVES = 10
 MIN_STEPS = 3
 MAX_STEPS = 10
 
