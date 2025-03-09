@@ -229,7 +229,7 @@ async def _detect_new_objectives(
             Determine if the following question can be answered with a high level of confidence. If not, what would be the ideal tasks to answer it? You must be able to add enough sources and quantification to answer the question.
 
             # Context
-            You already worked on objectives to solve the problem.
+            You already worked on objectives to solve the problem. Effort is limited to {MAX_OBJECTIVES} objectives, you've already started {len(think.objectives)} one. Do your best to fulfill the objective within this limit.
 
             # Rules
             - Don't make assumptions
