@@ -1,5 +1,4 @@
 import asyncio
-from textwrap import dedent
 from typing import Annotated
 
 from aiojobs import Scheduler
@@ -70,11 +69,7 @@ async def think_stream(
                     choices=[
                         ChatChoiceChunk(
                             delta=ChatMessage(
-                                content=dedent(f"""
-                                    <think>
-                                    {thinking}
-                                    </think>
-                                """).strip(),
+                                content=f"<think>{thinking}</think>",
                                 role="assistant",
                             ),
                             index=0,
@@ -145,13 +140,14 @@ async def think_sync(req: ChatCompletionRequest) -> ChatCompletionResponse:
     while not thinking_queue.empty():
         thinking_str += f"- {await thinking_queue.get()}\n"
         thinking_queue.task_done()
-    thinking_str.strip()
+    thinking_str = thinking_str.strip()
 
     # Build content string
     content_str = ""
     while not content_queue.empty():
         content_str += f"{await content_queue.get()}\n"
         content_queue.task_done()
+    content_str = content_str.strip()
 
     # Create response
     return ChatCompletionResponse(
@@ -162,12 +158,7 @@ async def think_sync(req: ChatCompletionRequest) -> ChatCompletionResponse:
             ChatChoiceMessage(
                 index=0,
                 message=ChatMessage(
-                    content=dedent(f"""
-                        <think>
-                        {thinking_str}
-                        </think>
-                        {content_str}
-                    """).strip(),
+                    content=f"<think>{thinking_str}</think>{content_str}",
                     role="assistant",
                 ),
                 finish_reason="stop",
