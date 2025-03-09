@@ -1,4 +1,5 @@
 import asyncio
+from typing import Annotated
 
 from aiojobs import Scheduler
 from litellm.types.completion import ChatCompletionUserMessageParam
@@ -376,14 +377,14 @@ async def _new_step(
     """
 
     async def _knowledge_tool(
-        knowledge: str,
-        short_name: str,
-        source: str,
+        knowledge: Annotated[str, "Knowledge to persist, like facts or data."],
+        short_name: Annotated[str, "A short sentence to identify easily the step."],
+        source: Annotated[str, "Source of the knowledge, like a URL or an author."],
     ) -> str:
         """
-        Persist knowledge into the documentation.
+        Persist knowledge into the documentation database.
 
-        A knowledge is a sourced informmation that will be used to answer the question. Like a research, a data, or a fact.
+        A knowledge muse be facts or data that will be used to answer the question.
         """
         objective.knowledges.append(
             KnowledgeState(
@@ -392,6 +393,7 @@ async def _new_step(
                 source=source,
             )
         )
+        # logger.debug("Knowledge persisted: %s", knowledge)
         return "Knowledge persisted."
 
     return await validated_completion(
