@@ -264,8 +264,8 @@ async def _run_objective(
 
             # Create new step
             step = await _new_step(
-                think=think,
                 objective=objective,
+                think=think,
             )
             objective.steps.append(step)
             logger.debug(
@@ -326,8 +326,8 @@ async def _should_stop_objective(
 
 
 async def _new_step(
-    think: ThinkState,
     objective: ObjectiveState,
+    think: ThinkState,
 ) -> StepState:
     """
     Create a new step for the objective.
@@ -362,6 +362,9 @@ async def _new_step(
 
             # Objective
             Solve a problem with a high level of confidence. Think step by step and store relevent knowledge. Knowledge will be used in the end to answer the question. Always find a way to enhance your knowledge and ensure you get the maximim out of the research.
+
+            # Context
+            Effort is limited to {MAX_STEPS} steps, you've already completed {len(objective.steps)} one. Do your best to fulfill the objective within this limit.
 
             # Rules
             - Be concise, no yapping
