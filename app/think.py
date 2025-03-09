@@ -37,8 +37,8 @@ async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
     # Add first objective
     state.objectives.append(
         ObjectiveState(
-            completion_criteria="User meaning is understood and research objectives are identified.",
-            description="Ideas: what? why? how? when? where? who?",
+            completion_criteria="User meaning is clear.",
+            description="Rephrase if needed. If it helps, cut the question into smaller parts.",
             knowledges=[
                 KnowledgeState(
                     description=state.user_question,
