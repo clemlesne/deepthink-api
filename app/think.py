@@ -71,9 +71,9 @@ async def think_stream(
                         ChatChoiceChunk(
                             delta=ChatMessage(
                                 content=dedent(f"""
-                                    <thinking>
+                                    <think>
                                     {thinking}
-                                    </thinking>
+                                    </think>
                                 """).strip(),
                                 role="assistant",
                             ),
@@ -163,9 +163,9 @@ async def think_sync(req: ChatCompletionRequest) -> ChatCompletionResponse:
                 index=0,
                 message=ChatMessage(
                     content=dedent(f"""
-                        <thinking>
+                        <think>
                         {thinking_str}
-                        </thinking>
+                        </think>
                         {content_str}
                     """).strip(),
                     role="assistant",
