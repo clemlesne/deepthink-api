@@ -1,7 +1,7 @@
 import asyncio
 
 from aiojobs import Scheduler
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from structlog.contextvars import bound_contextvars
 
 from app.helpers.llm import non_empty_completion, read_url_tool, validated_completion
@@ -190,7 +190,9 @@ async def _detect_new_objectives(
         short_name: str
 
     class _Res(BaseModel):
-        tasks: list[_Objective]
+        tasks: list[_Objective] = Field(
+            max_length=3,  # Not too much new objectives to make sure the thinking is focused
+        )
 
     res = await validated_completion(
         res_type=_Res,
