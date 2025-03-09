@@ -160,6 +160,15 @@ async def _answer_user(
 
     This function is called when the assistant can answer the question with a high level of confidence.
     """
+    knowledge = "\n".join(
+        [
+            f"## {objective.short_name}\n{objective.description}\n{objective.knowledge}"
+            for objective in think.objectives
+            if objective.status == ObjectiveStatus.COMPLETED
+        ]
+    )
+    # logger.debug("Using knowledge: %s", knowledge)
+
     res = await non_empty_completion(
         model=think.req.model,
         temperature=think.req.temperature,
@@ -182,7 +191,7 @@ async def _answer_user(
             {think.user_question}
 
             # Knowledge
-            {"\n".join([f"## {objective.short_name}\n{objective.description}\n{objective.knowledge}" for objective in think.objectives if objective.status == ObjectiveStatus.COMPLETED])}
+            {knowledge}
         """,
     )
 
