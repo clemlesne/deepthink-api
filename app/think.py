@@ -81,7 +81,7 @@ async def think_stream(
             thinking_queue.task_done()
 
     # Start thinking task
-    thinking_task = asyncio.create_task(
+    think_task = asyncio.create_task(
         _think(
             content_queue=content_queue,
             req=req,
@@ -94,7 +94,7 @@ async def think_stream(
     thinking_task = asyncio.create_task(_consume_thinking())
 
     # Wait for thinking task to finish
-    usage = await thinking_task
+    usage = await think_task
 
     # Wait for queue to empty and kill consumers
     await asyncio.gather(
@@ -113,7 +113,7 @@ async def think_stream(
             choices=[
                 ChatChoiceChunk(
                     delta=ChatMessage(
-                        content="",
+                        content=None,
                         role="assistant",
                     ),
                     index=0,

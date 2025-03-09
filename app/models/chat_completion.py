@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, computed_field
 
 
 class ChatMessage(BaseModel):
-    content: str
+    content: str | None
     role: Literal["system", "user", "assistant"]
 
 
