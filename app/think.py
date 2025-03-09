@@ -384,7 +384,9 @@ async def _new_step(
         """
         Persist knowledge into the documentation database.
 
-        A knowledge muse be facts or data that will be used to answer the question.
+        A knowledge:
+        - Must be facts or data that will be used to answer the question
+        - Must be sourced from a reliable source
         """
         objective.knowledges.append(
             KnowledgeState(
