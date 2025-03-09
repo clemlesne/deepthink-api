@@ -15,6 +15,7 @@ dependencies = [
   "numpydoc~=1.8",
   "pydantic~=2.8",
   "python-dotenv~=1.0",
+  "sse-starlette~=2.2",
   "structlog~=24.4",
   "uvicorn[standard]~=0.32",
 ]
@@ -51,11 +52,16 @@ docstring-code-format = true
 
 [tool.pyright]
 pythonVersion = "3.13"
-include = ["src", "tests"]
+include = ["app", "tests"]
 
 [tool.ruff.lint]
 ignore = ["A005"]
 select = ["A", "ARG", "ASYNC", "DTZ", "I", "PERF", "PL", "RUF", "T20", "UP"]
 
 [tool.pytest.ini_options]
-asyncio_default_fixture_loop_scope = "session"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_mode = "auto"
+junit_suite_name = "deepthink-api"
+log_file_level = "INFO"
+pythonpath = ["app"]
+testpaths = ["tests"]

@@ -57,8 +57,11 @@ test-static:
 
 test-unit:
 	@echo "➡️ Unit tests (Pytest)..."
-	PUBLIC_DOMAIN=dummy uv run pytest \
-		--junit-xml=test-reports/$(version_full).xml \
+	uv run pytest \
+		--junit-xml=test-reports/$(version_full)-simple.xml \
+		--log-file=test-reports/$(version_full)-simple.log \
+		--maxprocesses=2 \
+		-n=logical \
 		tests/*.py
 
 dev:

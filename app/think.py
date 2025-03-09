@@ -1,4 +1,5 @@
 import asyncio
+from textwrap import dedent
 from typing import Annotated
 
 from aiojobs import Scheduler
@@ -9,7 +10,8 @@ from structlog.contextvars import bound_contextvars
 from app.helpers.llm import non_empty_completion, read_url_tool, validated_completion
 from app.helpers.logging import logger
 from app.models.chat_completion import (
-    ChatChoice,
+    ChatChoiceChunk,
+    ChatChoiceMessage,
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChatMessage,
@@ -23,12 +25,162 @@ from app.models.state import (
     ThinkState,
 )
 
-MAX_OBJECTIVES = 10
+MAX_OBJECTIVES = 3
 MIN_STEPS = 3
-MAX_STEPS = 10
+MAX_STEPS = 5
 
 
-async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
+async def think_stream(
+    req: ChatCompletionRequest,
+    completions_queue: asyncio.Queue[ChatCompletionResponse],
+) -> None:
+    content_queue: asyncio.Queue[str] = asyncio.Queue()
+    thinking_queue: asyncio.Queue[str] = asyncio.Queue()
+
+    async def _consume_content() -> None:
+        while True:
+            content = await content_queue.get()
+            await completions_queue.put(
+                ChatCompletionResponse(
+                    model=req.model,
+                    object="chat.completion.chunk",
+                    usage=None,
+                    choices=[
+                        ChatChoiceChunk(
+                            delta=ChatMessage(
+                                content=content,
+                                role="assistant",
+                            ),
+                            index=0,
+                            finish_reason=None,
+                        ),
+                    ],
+                )
+            )
+            content_queue.task_done()
+
+    async def _consume_thinking() -> None:
+        while True:
+            thinking = await thinking_queue.get()
+            await completions_queue.put(
+                ChatCompletionResponse(
+                    model=req.model,
+                    object="chat.completion.chunk",
+                    usage=None,
+                    choices=[
+                        ChatChoiceChunk(
+                            delta=ChatMessage(
+                                content=dedent(f"""
+                                    <thinking>
+                                    {thinking}
+                                    </thinking>
+                                """).strip(),
+                                role="assistant",
+                            ),
+                            index=0,
+                            finish_reason=None,
+                        ),
+                    ],
+                )
+            )
+            thinking_queue.task_done()
+
+    # Start thinking task
+    thinking_task = asyncio.create_task(
+        _think(
+            content_queue=content_queue,
+            req=req,
+            thinking_queue=thinking_queue,
+        )
+    )
+
+    # Start consumers
+    content_task = asyncio.create_task(_consume_content())
+    thinking_task = asyncio.create_task(_consume_thinking())
+
+    # Wait for thinking task to finish
+    usage = await thinking_task
+
+    # Wait for queue to empty and kill consumers
+    await asyncio.gather(
+        content_queue.join(),
+        thinking_queue.join(),
+    )
+    content_task.cancel()
+    thinking_task.cancel()
+
+    # Send end of stream
+    await completions_queue.put(
+        ChatCompletionResponse(
+            model=req.model,
+            object="chat.completion.chunk",
+            usage=usage,  # As per OpenAI spec, usage is sent in the last chunk
+            choices=[
+                ChatChoiceChunk(
+                    delta=ChatMessage(
+                        content="",
+                        role="assistant",
+                    ),
+                    index=0,
+                    finish_reason="stop",
+                ),
+            ],
+        )
+    )
+
+
+async def think_sync(req: ChatCompletionRequest) -> ChatCompletionResponse:
+    content_queue: asyncio.Queue[str] = asyncio.Queue()
+    thinking_queue: asyncio.Queue[str] = asyncio.Queue()
+
+    # Execute thinking
+    usage = await _think(
+        content_queue=content_queue,
+        req=req,
+        thinking_queue=thinking_queue,
+    )
+
+    # Build thinking string
+    thinking_str = ""
+    while not thinking_queue.empty():
+        thinking_str += f"- {await thinking_queue.get()}\n"
+        thinking_queue.task_done()
+    thinking_str.strip()
+
+    # Build content string
+    content_str = ""
+    while not content_queue.empty():
+        content_str += f"{await content_queue.get()}\n"
+        content_queue.task_done()
+
+    # Create response
+    return ChatCompletionResponse(
+        model=req.model,
+        object="chat.completion",
+        usage=usage,
+        choices=[
+            ChatChoiceMessage(
+                index=0,
+                message=ChatMessage(
+                    content=dedent(f"""
+                        <thinking>
+                        {thinking_str}
+                        </thinking>
+                        {content_str}
+                    """).strip(),
+                    role="assistant",
+                ),
+                finish_reason="stop",
+            ),
+        ],
+    )
+
+
+async def _think(
+    content_queue: asyncio.Queue[str],
+    req: ChatCompletionRequest,
+    thinking_queue: asyncio.Queue[str],
+) -> Usage:
     state = ThinkState(
         req=req,
     )
@@ -54,8 +206,9 @@ async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
         # Schedule the first objective
         await scheduler.spawn(
             _run_objective(
-                think=state,
                 objective=state.objectives[0],
+                think=state,
+                thinking_queue=thinking_queue,
             )
         )
 
@@ -97,8 +250,9 @@ async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
             for objective in new_objectives:
                 await scheduler.spawn(
                     _run_objective(
-                        think=state,
                         objective=objective,
+                        think=state,
+                        thinking_queue=thinking_queue,
                     )
                 )
 
@@ -119,6 +273,7 @@ async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
     # Get answer
     answer = await _answer_user(state)
     logger.debug("Answer: %s", answer)
+    await content_queue.put(answer)
 
     # Print usage
     logger.debug(
@@ -126,30 +281,7 @@ async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
         state.usage.prompt_tokens,
         state.usage.completion_tokens,
     )
-
-    # Create response
-    return ChatCompletionResponse(
-        model=state.req.model,
-        usage=Usage(
-            prompt_tokens=state.usage.prompt_tokens,
-            completion_tokens=state.usage.completion_tokens,
-        ),
-        choices=[
-            ChatChoice(
-                index=0,
-                message=ChatMessage(
-                    content=f"""
-                        <thinking>
-                        {"\n".join([f"- {objective.description}" for objective in state.objectives])}
-                        </thinking>
-                        {answer}
-                    """,
-                    role="assistant",
-                ),
-                finish_reason="stop",
-            ),
-        ],
-    )
+    return state.usage
 
 
 async def _answer_user(
@@ -273,8 +405,9 @@ async def _detect_new_objectives(
 
 
 async def _run_objective(
-    think: ThinkState,
     objective: ObjectiveState,
+    think: ThinkState,
+    thinking_queue: asyncio.Queue[str],
 ) -> None:
     """
     Run the objective until it's completed or failed.
@@ -317,6 +450,7 @@ async def _run_objective(
                 think=think,
             )
             objective.steps.append(step)
+            await thinking_queue.put(step.short_name)
             logger.debug(
                 "New step: %s (%i/%i)",
                 step.short_name,
