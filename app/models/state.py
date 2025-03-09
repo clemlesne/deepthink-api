@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 from litellm.types.completion import ChatCompletionAssistantMessageParam
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field
 
 from app.helpers.llm import MessagesList
 from app.models.chat_completion import ChatCompletionRequest, Usage

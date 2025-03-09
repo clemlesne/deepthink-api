@@ -318,6 +318,7 @@ dependencies = [
     { name = "numpydoc" },
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "sse-starlette" },
     { name = "structlog" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -325,6 +326,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "deptry" },
+    { name = "openai" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -342,6 +344,7 @@ requires-dist = [
     { name = "gunicorn", specifier = "~=23.0" },
     { name = "litellm", specifier = "~=1.63" },
     { name = "numpydoc", specifier = "~=1.8" },
+    { name = "openai", marker = "extra == 'dev'", specifier = "~=1.65" },
     { name = "pydantic", specifier = "~=2.8" },
     { name = "pyright", marker = "extra == 'dev'", specifier = "~=1.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "~=8.3" },
@@ -349,6 +352,7 @@ requires-dist = [
     { name = "pytest-xdist", extras = ["psutil"], marker = "extra == 'dev'", specifier = "~=3.6" },
     { name = "python-dotenv", specifier = "~=1.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "~=0.6" },
+    { name = "sse-starlette", specifier = "~=2.2" },
     { name = "structlog", specifier = "~=24.4" },
     { name = "uvicorn", extras = ["standard"], specifier = "~=0.32" },
 ]
@@ -1475,6 +1479,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/3b/44/6716b257b0aa6bfd51a1b31665d1c205fb12cb5ad56de752dfa15657de2f/sphinxcontrib_serializinghtml-2.0.0.tar.gz", hash = "sha256:e9d912827f872c029017a53f0ef2180b327c3f7fd23c87229f7a8e8b70031d4d", size = 16080 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/52/a7/d2782e4e3f77c8450f727ba74a8f12756d5ba823d81b941f1b04da9d033a/sphinxcontrib_serializinghtml-2.0.0-py3-none-any.whl", hash = "sha256:6e2cb0eef194e10c27ec0023bfeb25badbbb5868244cf5bc5bdc04e4464bf331", size = 92072 },
+]
+
+[[package]]
+name = "sse-starlette"
+version = "2.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "starlette" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/71/a4/80d2a11af59fe75b48230846989e93979c892d3a20016b42bb44edb9e398/sse_starlette-2.2.1.tar.gz", hash = "sha256:54470d5f19274aeed6b2d473430b08b4b379ea851d953b11d7f1c4a2c118b419", size = 17376 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d9/e0/5b8bd393f27f4a62461c5cf2479c75a2cc2ffa330976f9f00f5f6e4f50eb/sse_starlette-2.2.1-py3-none-any.whl", hash = "sha256:6410a3d3ba0c89e7675d4c273a301d64649c03a5ef1ca101f10b47f895fd0e99", size = 10120 },
 ]
 
 [[package]]

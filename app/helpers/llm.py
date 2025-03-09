@@ -325,9 +325,12 @@ async def _raw_completion(  # noqa: PLR0913
             _validation_error=_validation_error,
         )
 
-    # Raise if response is truncated
     finish_reason = choice.finish_reason
-    if finish_reason != "stop":
+    # Alert if response is truncated
+    if finish_reason == "length":
+        logger.warning("LLM response truncated")
+    # Raise if response failed
+    elif finish_reason != "stop":
         raise CompletionException(
             f"Completion did not finish correctly: {finish_reason}"
         )
