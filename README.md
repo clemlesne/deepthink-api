@@ -2,6 +2,32 @@
 
 It simply expose a OpenAI compatible LLM API, answering like a thinking LLM. But in the backend, it performs a graph-based search and introspection to answer your question.
 
+## How do I consume it?
+
+Well, like a standard OpenAI API. That's literally the point!
+
+```python
+from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionUserMessageParam
+
+# ...
+
+async with AsyncOpenAI(
+    api_key="mock",
+    base_url="http://localhost:8080/v1",
+) as client:
+    res = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            ChatCompletionUserMessageParam(
+                content="What is the status of the world?",
+                role="user",
+            ),
+        ],
+    )
+    print(res.choices[0].message.content)
+```
+
 ## Example using OpenAI GPT 4o-mini
 
 Qestion:
