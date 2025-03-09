@@ -1,7 +1,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
-from functools import wraps
-from json import JSONDecodeError, loads
+from json import loads
 from textwrap import dedent
 from typing import TypeVar
 
