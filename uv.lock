@@ -325,6 +325,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "deptry" },
+    { name = "openai" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -342,6 +343,7 @@ requires-dist = [
     { name = "gunicorn", specifier = "~=23.0" },
     { name = "litellm", specifier = "~=1.63" },
     { name = "numpydoc", specifier = "~=1.8" },
+    { name = "openai", marker = "extra == 'dev'", specifier = "~=1.65" },
     { name = "pydantic", specifier = "~=2.8" },
     { name = "pyright", marker = "extra == 'dev'", specifier = "~=1.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "~=8.3" },
