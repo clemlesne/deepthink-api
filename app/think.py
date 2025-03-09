@@ -64,8 +64,13 @@ async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
                 new_objectives.append(objective)
                 state.objectives.append(objective)
 
-            # Abort current iteration if no new objectives
+            # Abort iteration if no new objectives
             if not new_objectives:
+                # If maximum objectives reached, stop the loop
+                if len(state.objectives) >= MAX_OBJECTIVES:
+                    logger.debug("Max objectives reached")
+                    break
+                # Wait for objectives to complete
                 continue
 
             logger.debug(
