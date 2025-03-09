@@ -346,7 +346,7 @@ async def _should_stop_objective(
             Assistant is a business analyst with 20 years of experience.
 
             # Objective
-            Can you answer the following question with a high level of confidence?
+            Can you answer the following question with a high level of confidence? If yes, provide a detailed answer with sources and quantification.
 
             # Context
             You gathered knowledge from research and analysis. This knowledge is trusted and reliable.
