@@ -8,7 +8,6 @@ import litellm
 from crawl4ai import AsyncWebCrawler, CacheMode, CrawlerRunConfig, CrawlResult
 from diskcache import Cache as DiskCache
 from litellm import ChatCompletionMessageToolCall, Choices, acompletion
-from litellm.caching.caching import Cache
 from litellm.files.main import ModelResponse
 from litellm.types.caching import LiteLLMCacheType
 from litellm.types.completion import (
@@ -36,7 +35,7 @@ MessagesList = list[
 ]
 
 # Enable Litellm cache
-litellm.cache = Cache(
+litellm.enable_cache(
     disk_cache_dir=".litellm_cache",
     type=LiteLLMCacheType.DISK,
 )
