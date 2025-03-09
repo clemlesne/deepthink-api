@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
-from json import loads
+from json import JSONDecodeError, loads
+from typing import TypeVar
 
 import litellm
 from crawl4ai import AsyncWebCrawler, CacheMode, CrawlerRunConfig, CrawlResult
@@ -17,11 +18,21 @@ from litellm.types.completion import (
 )
 from litellm.types.utils import Message
 from litellm.utils import function_to_dict, token_counter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from app.helpers.logging import logger
 from app.models.chat_completion import (
     Usage,
 )
+
+# Type hints
+MessagesList = list[
+    Message
+    | ChatCompletionSystemMessageParam
+    | ChatCompletionUserMessageParam
+    | ChatCompletionAssistantMessageParam
+    | ChatCompletionToolMessageParam
+]
 
 # Enable Litellm cache
 litellm.cache = Cache(
@@ -36,8 +47,16 @@ CRAWL_CONFIG = CrawlerRunConfig(
 )
 CRAWL_CACHE = DiskCache(".crawl4ai_cache")
 
+# Type validation
+P = TypeVar("P", bound=bool | float | int | str | BaseModel)
+T = TypeVar("T")
+
 
 class CompletionException(Exception):
+    pass
+
+
+class ValidationException(Exception):
     pass
 
 
@@ -83,27 +102,166 @@ async def read_url_tool(
     return markdown
 
 
-async def abstract_completion(  # noqa: PLR0913
-    messages: list[
-        Message
-        | ChatCompletionSystemMessageParam
-        | ChatCompletionUserMessageParam
-        | ChatCompletionAssistantMessageParam
-        | ChatCompletionToolMessageParam
-    ],
+async def non_empty_completion(  # noqa: PLR0913
     model: str,
+    system: str,
     temperature: float,
     top_p: float,
     usage: Usage,
     json: bool = False,
+    existing_history: MessagesList = [],
     tools: list[Callable[..., Awaitable[str]]] = [],
 ) -> str:
+    """
+    Ask a LLM to generate a type from a LLM.
+
+    Returns None if the response is invalid or empty.
+    """
+    # Explicit the response type in the system message
+    system = f"""
+        {system}
+
+        # Response format
+        string
+    """
+
+    def _validate(
+        req: str | None,
+    ) -> str:
+        """
+        Validate the string, make sure it is not empty.
+        """
+        # Raise if empty response
+        if not req:
+            raise ValidationException("Empty response")
+
+        return req
+
+    # Ask LLM
+    return await _raw_completion(
+        existing_history=existing_history,
+        json=json,
+        model=model,
+        system=system,
+        temperature=temperature,
+        tools=tools,
+        top_p=top_p,
+        usage=usage,
+        validation_callback=_validate,
+    )
+
+
+async def validated_completion(  # noqa: PLR0913
+    model: str,
+    res_type: type[P],
+    system: str,
+    temperature: float,
+    top_p: float,
+    usage: Usage,
+    existing_history: MessagesList = [],
+    tools: list[Callable[..., Awaitable[str]]] = [],
+) -> P:
+    """
+    Ask a LLM to generate a type from a LLM.
+
+    Returns None if the response is invalid or empty.
+    """
+
+    class _Native(BaseModel):
+        value: P
+
+    def _validate(
+        req: str | None,
+    ) -> P:
+        """
+        Validate the response, make sure it is not empty and is of the expected type.
+
+        Type is either a Pydantic model or a Python native type.
+        """
+        # Raise if empty response
+        if not req:
+            raise ValidationException("Empty response")
+
+        # Return as is if matching type
+        if isinstance(req, res_type):
+            return req
+
+        # Validate a Pydantic model
+        if issubclass(res_type, BaseModel):
+            # Validate JSON
+            try:
+                return res_type.model_validate_json(req)
+            # Pydantic validation error
+            except ValidationError as e:
+                raise ValidationException(
+                    e.json(
+                        # Lower LLM response size and API cost
+                        include_input=False,
+                        include_url=False,
+                    )
+                )
+
+        # Validate a native type
+        try:
+            return TypeAdapter(_Native).validate_python(req).value
+        # Pydantic validation error
+        except ValidationError as e:
+            raise ValidationException(
+                e.json(
+                    # Lower LLM response size and API cost
+                    include_input=False,
+                    include_url=False,
+                )
+            )
+
+    # System prompt with the response schema
+    system = f"""
+        {system}
+
+        # Response JSON schema
+        {res_type.model_json_schema() if issubclass(res_type, BaseModel) else _Native.model_json_schema()}
+    """
+
+    # Ask LLM
+    return await _raw_completion(
+        existing_history=existing_history,
+        json=True,
+        model=model,
+        system=system,
+        temperature=temperature,
+        tools=tools,
+        top_p=top_p,
+        usage=usage,
+        validation_callback=_validate,
+    )
+
+
+async def _raw_completion(  # noqa: PLR0913
+    existing_history: MessagesList,
+    json: bool,
+    model: str,
+    system: str,
+    temperature: float,
+    tools: list[Callable[..., Awaitable[str]]],
+    top_p: float,
+    usage: Usage,
+    validation_callback: Callable[[str | None], T],
+    _previous_result: str | None = None,
+    _retries_remaining: int = 10,
+    _validation_error: str | None = None,
+) -> T:
     """
     Get a response from the LLM.
 
     Exception is raised if the response is truncated or empty.
     """
-    new_messages = messages.copy()
+    local_history = existing_history.copy()
+    system_message = ChatCompletionSystemMessageParam(
+        content=system,
+        role="system",
+    )
+
+    # Convert functions to expected API schema
     tools_dict = [
         {
             "type": "function",
@@ -112,11 +270,41 @@ async def abstract_completion(  # noqa: PLR0913
         for tool in tools
     ]
 
+    # Add previous result and validation error
+    if _validation_error:
+        logger.debug(
+            "LLM validation error, retrying (%i retries left)", _retries_remaining
+        )
+
+        # Add previous result if available
+        if _previous_result:
+            local_history.append(
+                ChatCompletionAssistantMessageParam(
+                    content=_previous_result,
+                    role="assistant",
+                )
+            )
+
+        # Add validation error
+        local_history.append(
+            ChatCompletionUserMessageParam(
+                content=f"A validation error occurred, please retry: {_validation_error}",
+                role="user",
+            )
+        )
+
+    # Build history for the request
+    sent_history = [
+        system_message,
+        *local_history,
+    ]  # History + system message
+
     res: ModelResponse = await acompletion(
-        caching=True,
-        messages=new_messages,
+        caching=True,  # Use Litellm cache
+        messages=sent_history,
         model=model,
         response_format={"type": "json_object"} if json else None,
+        seed=42,  # Enhance reproducibility
         temperature=temperature,
         tools=tools_dict,
         top_p=top_p,
@@ -130,7 +318,7 @@ async def abstract_completion(  # noqa: PLR0913
         model=model,
     )  # Increment completion from the response string
     usage.prompt_tokens += token_counter(
-        text="\n".join([str(message) for message in new_messages]),
+        text="\n".join([str(message) for message in sent_history]),
         model=model,
     )  # Increment prompt from the request objects
 
@@ -141,33 +329,35 @@ async def abstract_completion(  # noqa: PLR0913
         available_functions = {function.__name__: function for function in tools}
 
         # Extend conversation with assistant's reply
-        new_messages.append(choice.message)
+        local_history.append(choice.message)
 
-        # Execute tools
-        for tool in await asyncio.gather(
-            *[
-                _execute_tool(
-                    available_functions=available_functions,
-                    tool_call=tool_call,
-                )
-                for tool_call in tool_calls
-            ]
-        ):
-            # Skip if no tool
-            if not tool:
-                continue
+        # Execute tools and add them to history
+        local_history.extend(
+            await asyncio.gather(
+                *[
+                    _execute_tool(
+                        available_functions=available_functions,
+                        tool_call=tool_call,
+                    )
+                    for tool_call in tool_calls
+                ]
+            )
+        )
 
-            # Add to history
-            new_messages.append(tool)
-
-        # Re-run the completion with the new messages
-        return await abstract_completion(
-            messages=new_messages,
+        # Re-run the completion with the tool results
+        return await _raw_completion(
+            existing_history=local_history,
+            json=json,
             model=model,
+            system=system,
             temperature=temperature,
-            tools=tools,
+            tools=[],  # Don't execute tools twice
             top_p=top_p,
             usage=usage,
+            validation_callback=validation_callback,
+            _previous_result=_previous_result,
+            _retries_remaining=_retries_remaining,
+            _validation_error=_validation_error,
         )
 
     # Raise if response is truncated
@@ -182,28 +372,77 @@ async def abstract_completion(  # noqa: PLR0913
     if not content:
         raise CompletionException("Completion message is empty")
 
-    return content
+    # Return parsed content
+    try:
+        return validation_callback(content)
+
+    # Retry if validation failed
+    except ValidationException as e:
+        validation_error = str(e)
+
+        # Raise if no retries left
+        if _retries_remaining == 0:
+            raise CompletionException(
+                f"Validation failed and no retries left: {validation_error}"
+            )
+
+        # Retry
+        logger.debug(
+            "LLM validation error, retrying (%i retries left)", _retries_remaining
+        )
+        return await _raw_completion(
+            existing_history=local_history,
+            json=json,
+            model=model,
+            system=system,
+            temperature=temperature,
+            tools=tools,
+            top_p=top_p,
+            usage=usage,
+            validation_callback=validation_callback,
+            _previous_result=content,
+            _retries_remaining=_retries_remaining - 1,
+            _validation_error=validation_error,
+        )
 
 
 async def _execute_tool(
     tool_call: ChatCompletionMessageToolCall,
     available_functions: dict[str, Callable[..., Awaitable[str]]],
-) -> ChatCompletionToolMessageParam | None:
+) -> ChatCompletionToolMessageParam:
     # Skip if no function name
     function_name = tool_call.function.name
     if not function_name:
-        return
+        return ChatCompletionToolMessageParam(
+            content="No function name provided.",
+            role="tool",
+            tool_call_id=tool_call.id,
+        )
 
     # Skip if function not available
     if function_name not in available_functions:
-        return
+        return ChatCompletionToolMessageParam(
+            content=f"Function '{function_name}' not available.",
+            role="tool",
+            tool_call_id=tool_call.id,
+        )
 
     # Execute
     logger.debug("Executing tool: %s", function_name)
     function_to_call = available_functions[function_name]
-    function_response = await function_to_call(**loads(tool_call.function.arguments))
 
-    # Build tool model
+    # Try parse arguments and execute
+    try:
+        function_response = await function_to_call(
+            **loads(tool_call.function.arguments)
+        )
+    except TypeError as e:
+        return ChatCompletionToolMessageParam(
+            content=f"Bad arguments: {e}",
+            role="tool",
+            tool_call_id=tool_call.id,
+        )
+
     return ChatCompletionToolMessageParam(
         content=function_response,
         role="tool",

@@ -1,13 +1,10 @@
 import asyncio
-from json import loads
 
 from aiojobs import Scheduler
-from litellm.types.completion import (
-    ChatCompletionAssistantMessageParam,
-    ChatCompletionSystemMessageParam,
-)
+from pydantic import BaseModel
+from structlog.contextvars import bound_contextvars
 
-from app.helpers.llm import abstract_completion, read_url_tool
+from app.helpers.llm import non_empty_completion, read_url_tool, validated_completion
 from app.helpers.logging import logger
 from app.models.chat_completion import (
     ChatChoice,
@@ -16,9 +13,10 @@ from app.models.chat_completion import (
     ChatMessage,
     Usage,
 )
-from app.models.state import ObjectiveState, ObjectiveStatus, ThinkState
+from app.models.state import ObjectiveState, ObjectiveStatus, StepState, ThinkState
 
 MAX_OBJECTIVES = 5
+MIN_STEPS = 3
 MAX_STEPS = 5
 
 
@@ -31,8 +29,9 @@ async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
     # Add first objective
     state.objectives.append(
         ObjectiveState(
-            description="Identify user meaning",
+            description="Identify the ins and outs of the question. What? Why? How? When? Where? Who?",
             knowledge=f"User question is: {state.user_question}",
+            short_name="Identify question",
         )
     )
 
@@ -62,16 +61,16 @@ async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
                 if len(state.objectives) >= MAX_OBJECTIVES:
                     logger.debug("Max objectives reached")
                     break
-                new_objectives.append(
-                    ObjectiveState(
-                        description=objective,
-                    )
-                )
-                state.objectives.append(new_objectives[-1])
+                new_objectives.append(objective)
+                state.objectives.append(objective)
+
+            # Abort current iteration if no new objectives
+            if not new_objectives:
+                continue
 
             logger.debug(
                 "New objectives: %s",
-                [objective.description for objective in new_objectives],
+                [objective.short_name for objective in new_objectives],
             )
 
             # Schedule new objectives
@@ -83,9 +82,30 @@ async def think(req: ChatCompletionRequest) -> ChatCompletionResponse:
                     )
                 )
 
+    # Pretty pring objectives and steps with a tree, for debugging
+    logger.debug("Initial question: %s", state.user_question)
+    for objective in state.objectives:
+        logger.debug(
+            " | Objective: %s (%s)",
+            objective.short_name,
+            objective.status,
+        )
+        for step in objective.steps:
+            logger.debug(
+                " |-- Step: %s",
+                step.short_name,
+            )
+
     # Get answer
     answer = await _answer_user(state)
     logger.debug("Answer: %s", answer)
+
+    # Print usage
+    logger.debug(
+        "Usage: prompt=%i, completion=%i",
+        state.usage.prompt_tokens,
+        state.usage.completion_tokens,
+    )
 
     # Create response
     return ChatCompletionResponse(
@@ -120,35 +140,30 @@ async def _answer_user(
 
     This function is called when the assistant can answer the question with a high level of confidence.
     """
-    res = await abstract_completion(
-        messages=[
-            ChatCompletionSystemMessageParam(
-                content=f"""
-                    Assistant is a business analyst with 20 years of experience.
-
-                    # Objective
-                    Answer the following question with a high level of confidence.
-
-                    # Context
-                    You gathered knowledge from research and analysis. This knowledge is trusted and reliable.
-
-                    # Rules
-                    - Don't make assumptions
-                    - Only use the knowledge you gathered to answer
-
-                    # Question
-                    {think.user_question}
-
-                    # Knowledge
-                    {"\n".join([f"{objective.description}: {objective.knowledge}" for objective in think.objectives if objective.status == ObjectiveStatus.COMPLETED])}
-                """,
-                role="system",
-            ),
-        ],
+    res = await non_empty_completion(
         model=think.req.model,
         temperature=think.req.temperature,
         top_p=think.req.top_p,
         usage=think.usage,
+        system=f"""
+            Assistant is a business analyst with 20 years of experience.
+
+            # Objective
+            Answer the following question. Answer must be sourced and quantified with a high level of detail.
+
+            # Context
+            You gathered knowledge from research and analysis. This knowledge is trusted and reliable.
+
+            # Rules
+            - Don't make assumptions
+            - Only use the knowledge you gathered to answer
+
+            # Question
+            {think.user_question}
+
+            # Knowledge
+            {"\n".join([f"{objective.description}: {objective.knowledge}" for objective in think.objectives if objective.status == ObjectiveStatus.COMPLETED])}
+        """,
     )
 
     return res
@@ -156,7 +171,7 @@ async def _answer_user(
 
 async def _detect_new_objectives(
     think: ThinkState,
-) -> list[str]:
+) -> list[ObjectiveState]:
     """
     Detect new objectives from the current state.
 
@@ -164,53 +179,53 @@ async def _detect_new_objectives(
 
     Response is a list of tasks that the assistant will do to answer the question. If the assistant can answer the question, list will be empty.
     """
-    res = await abstract_completion(
-        json=True,
-        messages=[
-            ChatCompletionSystemMessageParam(
-                content=f"""
-                    Assistant is a business analyst with 20 years of experience.
 
-                    # Objective
-                    Determine if the following question can be answered with a high level of confidence. If not, what would be the ideal tasks to answer it?
+    class _Objective(BaseModel):
+        description: str
+        short_name: str
 
-                    # Question
-                    {think.user_question}
+    class _Res(BaseModel):
+        tasks: list[_Objective]
 
-                    # Ideas you already worked on
-                    {"\n".join([f"{objective.description}: {objective.answer}" for objective in think.objectives if objective.answer])}
-
-                    # Response format in JSON
-                    - Empty array, if you can answer the question
-                    - A list of tasks, if you can't answer the question
-
-                    # Response example
-                    {{
-                        "tasks": [
-                            "Task 1",
-                            "Task 2"
-                        ]
-                    }}
-                """,
-                role="system",
-            ),
-        ],
+    res = await validated_completion(
+        res_type=_Res,
         model=think.req.model,
         temperature=think.req.temperature,
         top_p=think.req.top_p,
         usage=think.usage,
+        system=f"""
+            Assistant is a business analyst with 20 years of experience.
+
+            # Objective
+            Determine if the following question can be answered with a high level of confidence. If not, what would be the ideal tasks to answer it? You must be able to add enough sources and quantification to answer the question.
+
+            # Context
+            You already worked on objectives to solve the problem.
+
+            # Rules
+            - Don't make assumptions
+            - Only use the knowledge you gathered to answer
+
+            # Question
+            {think.user_question}
+
+            # Ideas you worked on
+            {"\n".join([f"{objective.description}: {objective.answer}" for objective in think.objectives if objective.answer])}
+            {"\n".join([f"{objective.description}: {objective.status}" for objective in think.objectives if not objective.answer])}
+
+            # Response options
+            - A list of tasks, to help you answer the question
+            - Empty array, if you are confident you can answer the question with the knowledge you gathered
+        """,
     )
 
-    # Try parse
-    try:
-        tasks = loads(res)
-        assert isinstance(tasks["tasks"], list)
-    except (ValueError, AssertionError):
-        logger.error("Error parsing new objectives: %s", res)
-        return []
-
-    # Return the list
-    return tasks["tasks"]
+    return [
+        ObjectiveState(
+            description=task.description,
+            short_name=task.short_name,
+        )
+        for task in res.tasks
+    ]
 
 
 async def _run_objective(
@@ -222,35 +237,45 @@ async def _run_objective(
 
     The objective is a list of steps that will be executed one by one.
     """
-    logger.debug("Starting objective: %s", objective.description)
-    objective.status = ObjectiveStatus.IN_PROGRESS
+    with bound_contextvars(
+        objective=objective.short_name,
+    ):
+        logger.debug("Starting objective: %s", objective.description)
+        objective.status = ObjectiveStatus.IN_PROGRESS
 
-    while objective.status is ObjectiveStatus.IN_PROGRESS:
-        # Check if completed
-        should_stop = await _should_stop_objective(
-            think=think,
-            objective=objective,
-        )
-        if isinstance(should_stop, str):
-            logger.debug("Objective completed with answer: %s", should_stop)
-            objective.status = ObjectiveStatus.COMPLETED
-            objective.answer = should_stop
-            break
+        while objective.status is ObjectiveStatus.IN_PROGRESS:
+            # Ensure a minimum steps to force cognition
+            if len(objective.steps) >= MIN_STEPS:
+                # Check if completed
+                should_stop = await _should_stop_objective(
+                    think=think,
+                    objective=objective,
+                )
+                if isinstance(should_stop, str):
+                    logger.debug("Objective completed: %s", should_stop)
+                    objective.status = ObjectiveStatus.COMPLETED
+                    objective.answer = should_stop
+                    break
 
-        # Check if max steps reached
-        if len(objective.steps) >= MAX_STEPS:
-            objective.status = ObjectiveStatus.FAILED
-            break
+            # Check if max steps reached
+            if len(objective.steps) >= MAX_STEPS:
+                objective.status = ObjectiveStatus.FAILED
+                break
 
-        # Create new step
-        step = await _new_step(
-            think=think,
-            objective=objective,
-        )
-        objective.steps.append(step)
-        logger.debug("New step: %s", step)
+            # Create new step
+            step = await _new_step(
+                think=think,
+                objective=objective,
+            )
+            objective.steps.append(step)
+            logger.debug(
+                "New step: %s (%i/%i)",
+                step.short_name,
+                len(objective.steps),
+                MAX_STEPS,
+            )
 
-    logger.debug("Objective completed with status: %s", objective.status)
+        logger.debug("Objective ended: %s", objective.status)
 
 
 async def _should_stop_objective(
@@ -262,39 +287,34 @@ async def _should_stop_objective(
 
     If the assistant can answer the objective, return the answer. Else, return False.
     """
-    res = await abstract_completion(
-        messages=[
-            ChatCompletionSystemMessageParam(
-                content=f"""
-                    Assistant is a business analyst with 20 years of experience.
-
-                    # Objective
-                    Can you answer the following question with a high level of confidence?
-
-                    # Context
-                    You gathered knowledge from research and analysis. This knowledge is trusted and reliable.
-
-                    # Rules
-                    - Don't make assumptions
-                    - Only use the knowledge you gathered to answer
-
-                    # Question
-                    {objective.description}
-
-                    # Knowledge
-                    {objective.knowledge}
-
-                    # Response format
-                    - "Can't answer", if you can't answer the question
-                    - The full answer, if you can answer the question
-                """,
-                role="system",
-            ),
-        ],
+    res = await non_empty_completion(
         model=think.req.model,
         temperature=think.req.temperature,
         top_p=think.req.top_p,
         usage=think.usage,
+        system=f"""
+            Assistant is a business analyst with 20 years of experience.
+
+            # Objective
+            Can you answer the following question with a high level of confidence?
+
+            # Context
+            You gathered knowledge from research and analysis. This knowledge is trusted and reliable.
+
+            # Rules
+            - Don't make assumptions
+            - Only use the knowledge you gathered to answer
+
+            # Question
+            {objective.description}
+
+            # Knowledge
+            {objective.knowledge}
+
+            # Response options
+            - "Can't answer", if you can't answer the question
+            - The full answer, if you can answer the question
+        """,
     )
 
     # Return false if can't answer
@@ -308,7 +328,7 @@ async def _should_stop_objective(
 async def _new_step(
     think: ThinkState,
     objective: ObjectiveState,
-) -> str:
+) -> StepState:
     """
     Create a new step for the objective.
 
@@ -326,36 +346,10 @@ async def _new_step(
         objective.knowledge += f"\n{knowledge}"
         return "Knowledge persisted."
 
-    return await abstract_completion(
-        messages=[
-            ChatCompletionSystemMessageParam(
-                content=f"""
-                    Assistant is a business analyst with 20 years of experience. Assistant is meticulous and perfectionist.
-
-                    # Objective
-                    Solve a problem with a high level of confidence. Think step by step and store relevent knowledge. Knowledge will be used in the end to answer the question. Always find a way to enhance your knowledge and ensure you get the maximim out of the research.
-
-                    # Rules
-                    - Don't make assumptions
-                    - Only use the knowledge you gathered to answer
-
-                    # Question
-                    {objective.description}
-
-                    # Knowledge
-                    {objective.knowledge}
-                """,
-                role="system",
-            ),
-            *[
-                ChatCompletionAssistantMessageParam(
-                    content=step,
-                    role="assistant",
-                )
-                for step in objective.steps
-            ],
-        ],
+    return await validated_completion(
+        existing_history=objective.history,
         model=think.req.model,
+        res_type=StepState,
         temperature=think.req.temperature,
         tools=[
             _persist_knowledge,
@@ -363,4 +357,21 @@ async def _new_step(
         ],
         top_p=think.req.top_p,
         usage=think.usage,
+        system=f"""
+            Assistant is a business analyst with 20 years of experience. Assistant is meticulous and perfectionist.
+
+            # Objective
+            Solve a problem with a high level of confidence. Think step by step and store relevent knowledge. Knowledge will be used in the end to answer the question. Always find a way to enhance your knowledge and ensure you get the maximim out of the research.
+
+            # Rules
+            - Be concise, no yapping
+            - Don't make assumptions
+            - Only use the knowledge you gathered to answer
+
+            # Question
+            {objective.description}
+
+            # Knowledge
+            {objective.knowledge}
+        """,
     )
