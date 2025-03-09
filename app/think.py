@@ -284,7 +284,12 @@ async def _run_objective(
     with bound_contextvars(
         objective=objective.short_name,
     ):
-        logger.debug("Starting objective: %s", objective.description)
+        logger.debug(
+            "Starting objective: %s (%i/%i)",
+            objective.description,
+            len(think.objectives),
+            MAX_OBJECTIVES,
+        )
         objective.status = ObjectiveStatus.IN_PROGRESS
 
         while objective.status is ObjectiveStatus.IN_PROGRESS:
